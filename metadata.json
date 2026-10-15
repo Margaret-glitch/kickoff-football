@@ -1,0 +1,6 @@
+{
+  "name": "ONEKICKX - Live Scores & Sports Betting",
+  "description": "ONEKICKX - Live football scores, match statistics, odds, predictions, and real-time wallet tracking.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
