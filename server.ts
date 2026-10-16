@@ -201,11 +201,22 @@ app.get('/api/payments/exchange-rate', async (req: Request, res: Response) => {
 // ==============================================================================
 const ONEKICKX_DATA_ENDPOINT = 'https://api.onekickx.com/api/data';
 
+// In-memory cache for football proxy responses to prevent hitting Hostinger computing limits
+const footballCache = new Map<string, { timestamp: number; data: unknown }>();
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes TTL
+
 app.all('/api/football/proxy', async (req: Request, res: Response) => {
   try {
     const targetUrl = (req.query.url || req.body?.url) as string;
     if (!targetUrl) {
       return res.status(400).json({ ok: false, error: 'Target URL is required' });
+    }
+
+    // Check cache first to avoid redundant upstream requests
+    const now = Date.now();
+    const cached = footballCache.get(targetUrl);
+    if (cached && now - cached.timestamp < CACHE_TTL_MS) {
+      return res.json(cached.data);
     }
 
     const controller = new AbortController();
@@ -224,16 +235,26 @@ app.all('/api/football/proxy', async (req: Request, res: Response) => {
     clearTimeout(timeout);
 
     if (!response.ok) {
-      return res.status(response.status).json({ ok: false, error: `OnekickX upstream error ${response.status}` });
+      // If upstream hits computing limit (403), return stale cache if available
+      if ((response.status === 403 || response.status === 429) && cached) {
+        return res.json(cached.data);
+      }
+      return res.status(response.status).json({ ok: false, error: `OnekickX upstream error ${response.status} (Hostinger computing limit)` });
     }
 
     const data = await response.json();
-    if (data?.success && data?.data !== undefined) {
-      return res.json(data.data);
-    }
-    return res.json(data);
+    const resultData = (data?.success && data?.data !== undefined) ? data.data : data;
+
+    // Save to cache
+    footballCache.set(targetUrl, { timestamp: now, data: resultData });
+
+    return res.json(resultData);
   } catch (_err) {
-    return res.status(502).json({ ok: false, error: 'OnekickX proxy timeout or unavailable' });
+    const cached = footballCache.get((req.query.url || req.body?.url) as string);
+    if (cached) {
+      return res.json(cached.data);
+    }
+    return res.status(502).json({ ok: false, error: 'OnekickX proxy timeout or Hostinger computing limit reached' });
   }
 });
 
@@ -381,13 +402,27 @@ app.post('/api/payments/paystack/initialize', async (req: Request, res: Response
   }
 });
 
+// Set to track successfully credited payment references (prevent duplicate credits)
+const creditedReferences = new Set<string>();
+
 // ==============================================================================
 // 4. VERIFY PAYSTACK PAYMENT & CREDIT ACCOUNT
 // ==============================================================================
 app.get('/api/payments/paystack/verify/:reference', async (req: Request, res: Response) => {
   const { reference } = req.params;
-  const session = sessionStore.get(reference);
+  if (!reference) {
+    return res.status(400).json({ ok: false, error: 'Reference is required' });
+  }
 
+  // Prevent duplicate credits
+  if (creditedReferences.has(reference)) {
+    return res.status(400).json({
+      ok: false,
+      error: 'Transaction reference has already been credited (duplicate credit prevention)'
+    });
+  }
+
+  const session = sessionStore.get(reference);
   const secretKey = getPaystackSecretKey();
 
   // 1. If we have a secret key starting with sk_, query Paystack Verification API
@@ -406,6 +441,7 @@ app.get('/api/payments/paystack/verify/:reference', async (req: Request, res: Re
         const pStatus = verifyData?.data?.status;
 
         if (pStatus === 'success') {
+          creditedReferences.add(reference);
           if (session) {
             session.status = 'success';
             session.completedAt = new Date().toISOString();
@@ -424,20 +460,20 @@ app.get('/api/payments/paystack/verify/:reference', async (req: Request, res: Re
             reference,
             amountUSD,
             amountNGN: paidNgn,
-            message: `Payment verified. Credit $${amountUSD.toFixed(2)} USD to user balance.`,
+            message: `Payment verified. Credited $${amountUSD.toFixed(2)} USD to user balance.`,
             credited: true,
             paystackData: verifyData.data
           });
         }
       }
     } catch (err) {
-      console.warn('[Paystack Verification] Remote API error, checking session store:', err);
+      console.warn('[Paystack Verification] Remote API verification error:', err);
     }
   }
 
-  // 2. Verify from session store
-  if (session) {
-    session.status = 'success';
+  // 2. Verify from session store if session was explicitly initialized and marked success
+  if (session && session.status === 'success') {
+    creditedReferences.add(reference);
     session.completedAt = new Date().toISOString();
     sessionStore.set(reference, session);
 
@@ -448,22 +484,17 @@ app.get('/api/payments/paystack/verify/:reference', async (req: Request, res: Re
       reference,
       amountUSD: session.amountUSD,
       amountNGN: session.amountNGN,
-      message: `Deposit verified. Credit $${session.amountUSD.toFixed(2)} USD to user balance.`,
+      message: `Deposit verified from session. Credited $${session.amountUSD.toFixed(2)} USD.`,
       credited: true
     });
   }
 
-  // 3. Fallback for client confirmed transactions
-  const fx = await getLiveExchangeRate();
-  return res.json({
-    ok: true,
-    status: 'success',
-    verified: true,
-    reference,
-    amountUSD: 50,
-    amountNGN: Math.round(50 * fx.rate),
-    message: 'Payment confirmed. User balance credited.',
-    credited: true
+  // 3. Strict rejection of unverified or failed payments (Removed $50 fallback)
+  return res.status(400).json({
+    ok: false,
+    verified: false,
+    credited: false,
+    error: 'Payment verification failed. Unverified or pending payments cannot be credited.'
   });
 });
 
@@ -471,29 +502,30 @@ app.get('/api/payments/paystack/verify/:reference', async (req: Request, res: Re
 // 5. CONFIRM PAYMENT DIRECTLY (CALLED BY PAYSTACK POP SUCCESS CALLBACK)
 // ==============================================================================
 app.post('/api/payments/paystack/confirm', async (req: Request, res: Response) => {
-  const { reference, amountUSD, amountNGN, email } = req.body;
-
-  let session = sessionStore.get(reference);
-  if (!session) {
-    const fx = await getLiveExchangeRate();
-    const usd = Number(amountUSD) || 50;
-    const ngn = Number(amountNGN) || Math.round(usd * fx.rate);
-    session = {
-      reference: reference || `pstk_${Date.now()}`,
-      amountUSD: usd,
-      amountNGN: ngn,
-      amountKobo: ngn * 100,
-      customer: { email },
-      status: 'success',
-      createdAt: new Date().toISOString(),
-      completedAt: new Date().toISOString()
-    };
-    sessionStore.set(reference, session);
-  } else {
-    session.status = 'success';
-    session.completedAt = new Date().toISOString();
-    sessionStore.set(reference, session);
+  const { reference } = req.body;
+  if (!reference) {
+    return res.status(400).json({ ok: false, error: 'Reference is required' });
   }
+
+  if (creditedReferences.has(reference)) {
+    return res.status(400).json({
+      ok: false,
+      error: 'Transaction reference has already been credited (duplicate credit prevention)'
+    });
+  }
+
+  const session = sessionStore.get(reference);
+  if (!session) {
+    return res.status(400).json({
+      ok: false,
+      error: 'Invalid payment session or reference not initialized on backend'
+    });
+  }
+
+  creditedReferences.add(reference);
+  session.status = 'success';
+  session.completedAt = new Date().toISOString();
+  sessionStore.set(reference, session);
 
   return res.json({
     ok: true,

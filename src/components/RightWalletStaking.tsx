@@ -26,6 +26,7 @@ interface RightWalletStakingProps {
   } | null;
   onClearActiveSelection?: () => void;
   onRequireAuth?: (action: () => void) => void;
+  isDisabled?: boolean;
 }
 
 export const RightWalletStaking = ({
@@ -33,7 +34,8 @@ export const RightWalletStaking = ({
   onAddStake,
   activeSelection,
   onClearActiveSelection,
-  onRequireAuth
+  onRequireAuth,
+  isDisabled
 }: RightWalletStakingProps) => {
   const navigate = useNavigate();
   const { user, profile, requireAuth } = useAuth();
@@ -58,7 +60,7 @@ export const RightWalletStaking = ({
   const totalProfit = +(potentialReturn - stakeAmount).toFixed(2);
 
   const handlePlaceBet = () => {
-    if (stakeAmount <= 0) return;
+    if (isDisabled || stakeAmount <= 0) return;
 
     const executeBet = () => {
       onAddStake?.({
@@ -262,7 +264,7 @@ export const RightWalletStaking = ({
             {/* Submit Button */}
             <button
               onClick={handlePlaceBet}
-              disabled={isSuccess || stakeAmount < 15 || (user ? stakeAmount > userBalance : false)}
+              disabled={isDisabled || isSuccess || stakeAmount < 15 || (user ? stakeAmount > userBalance : false)}
               className={`w-full py-3 rounded-xl font-black text-xs uppercase tracking-wider text-white transition-all shadow-xs cursor-pointer flex items-center justify-center gap-1.5 ${
                 isSuccess
                   ? 'bg-emerald-600'

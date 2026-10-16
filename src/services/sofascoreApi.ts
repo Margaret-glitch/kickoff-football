@@ -102,12 +102,12 @@ function unwrapSofascorePayload<T>(raw: unknown): T | null {
   return obj as T;
 }
 
-// Resilient fetcher using OnekickX Direct Elite Route (POST & GET) with local proxy fallback
-export async function fetchFromSofascore<T>(endpointUrl: string): Promise<T | null> {
-  // 1. Direct Elite POST (Recommended JavaScript / Fetch Way)
+// Simplified fetcher using OnekickX Direct Elite Route (POST)
+// No fallback to generated matches to ensure genuine data only
+export async function fetchFromSofascore<T>(endpointUrl: string): Promise<{ data: T | null; cached: boolean } | null> {
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 6000);
+    const timeout = setTimeout(() => controller.abort(), 15000);
 
     const response = await fetch(ONEKICKX_DATA_ENDPOINT, {
       method: 'POST',
@@ -123,58 +123,23 @@ export async function fetchFromSofascore<T>(endpointUrl: string): Promise<T | nu
 
     if (response.ok) {
       const json = await response.json();
-      const payload = unwrapSofascorePayload<T>(json);
-      if (payload) return payload;
+      return { 
+        data: unwrapSofascorePayload<T>(json),
+        cached: !!json.cached
+      };
     }
-  } catch (_err) {
-    // Continue to GET attempt
-  }
-
-  // 2. Direct Elite GET Way (URL / Browser Way)
-  try {
-    const getUrl = `${ONEKICKX_DATA_ENDPOINT}?url=${encodeURIComponent(endpointUrl)}`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 6000);
-
-    const response = await fetch(getUrl, {
-      signal: controller.signal,
-      headers: { Accept: 'application/json' }
-    });
-
-    clearTimeout(timeout);
-
-    if (response.ok) {
-      const json = await response.json();
-      const payload = unwrapSofascorePayload<T>(json);
-      if (payload) return payload;
+    
+    // Log upstream errors for debugging
+    console.warn(`[SofaScore API] Proxy error: ${response.status}`);
+    return null;
+  } catch (_err: any) {
+    if (_err.name === 'AbortError') {
+      console.warn('[SofaScore API] Fetch timed out or was aborted.');
+    } else {
+      console.error('[SofaScore API] Fetch failed:', _err);
     }
-  } catch (_err) {
-    // Continue to backend proxy fallback
+    return null;
   }
-
-  // 3. Backend Proxy Fallback (/api/football/proxy)
-  try {
-    const proxyUrl = `/api/football/proxy?url=${encodeURIComponent(endpointUrl)}`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 6000);
-
-    const response = await fetch(proxyUrl, {
-      signal: controller.signal,
-      headers: { Accept: 'application/json' }
-    });
-
-    clearTimeout(timeout);
-
-    if (response.ok) {
-      const json = await response.json();
-      const payload = unwrapSofascorePayload<T>(json);
-      if (payload) return payload;
-    }
-  } catch (_err) {
-    // Silent fallback
-  }
-
-  return null;
 }
 
 // Generate realistic date-tailored league matches for past, today, and future dates
@@ -269,8 +234,8 @@ export async function fetchUEFANationsLeagueGroup(): Promise<LeagueGroup | null>
         }>;
       }>(`https://www.sofascore.com/api/v1/team/${tid}/events/next/0`);
 
-      if (data?.events) {
-        for (const ev of data.events) {
+      if (data?.data?.events) {
+        for (const ev of data.data.events) {
           if (ev.tournament?.name?.includes('UEFA Nations League') && !seenEventIds.has(ev.id)) {
             seenEventIds.add(ev.id);
             const homeCode = ev.homeTeam.country?.alpha2?.toLowerCase() || 'un';
@@ -369,14 +334,17 @@ export async function fetchLiveFootballMatches(): Promise<LeagueGroup[] | null> 
     events?: LiveEventItem[];
   }
 
-  // Fetch live matches directly via OnekickX Elite route without blocking delays
-  const liveResultPromise = fetchFromSofascore<LiveResponse>('https://www.sofascore.com/api/v1/sport/football/events/live');
+  // Fetch live matches directly via OnekickX Elite route
+  const liveResultRaw = await fetchFromSofascore<LiveResponse>('https://www.sofascore.com/api/v1/sport/football/events/live');
+  const isStale = liveResultRaw ? liveResultRaw.cached : true;
+  const liveResult = liveResultRaw ? liveResultRaw.data : null;
+
   const uefaPromise = Promise.race([
     fetchUEFANationsLeagueGroup(),
     new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500))
   ]);
 
-  const [liveResult, uefaLeague] = await Promise.all([liveResultPromise, uefaPromise]);
+  const [uefaLeague] = await Promise.all([uefaPromise]);
 
   const finalLeagues: LeagueGroup[] = [];
 
@@ -455,6 +423,7 @@ export async function fetchLiveFootballMatches(): Promise<LeagueGroup[] | null> 
         hasRedCard: Boolean(ev.redCards && (ev.redCards.home || ev.redCards.away)),
         redCardTeam: ev.redCards?.home ? 'home' : ev.redCards?.away ? 'away' : undefined,
         isFavorite: false,
+        isStale: isStale,
         odds: dynamicOdds
       };
 
@@ -480,7 +449,7 @@ export async function fetchLiveFootballMatches(): Promise<LeagueGroup[] | null> 
     });
   }
 
-  return finalLeagues.length > 0 ? finalLeagues : INITIAL_LEAGUES;
+  return finalLeagues;
 }
 
 // Fetch real finished fixtures for past days
@@ -504,8 +473,8 @@ export async function fetchFinishedPastMatches(): Promise<LeagueGroup[] | null> 
         }>;
       }>(`https://www.sofascore.com/api/v1/team/${tid}/events/last/0`);
 
-      if (data?.events) {
-        for (const ev of data.events.slice(-4)) {
+      if (data?.data?.events) {
+        for (const ev of data.data.events.slice(-4)) {
           if (!seenEventIds.has(ev.id)) {
             seenEventIds.add(ev.id);
             const homeCode = ev.homeTeam.country?.alpha2?.toLowerCase() || 'un';
@@ -560,20 +529,19 @@ export async function fetchMatchesByDateOffset(offset: number): Promise<LeagueGr
   try {
     if (offset === 0) {
       const liveMatches = await fetchLiveFootballMatches();
-      return liveMatches && liveMatches.length > 0 ? liveMatches : INITIAL_LEAGUES;
+      return liveMatches && liveMatches.length > 0 ? liveMatches : [];
     } else if (offset < 0) {
       const pastMatches = await fetchFinishedPastMatches();
-      return pastMatches && pastMatches.length > 0 ? pastMatches : generateMatchesForDateOffset(offset);
+      return pastMatches && pastMatches.length > 0 ? pastMatches : [];
     } else {
       const uefaLeague = await fetchUEFANationsLeagueGroup();
       if (uefaLeague) {
-        const generated = generateMatchesForDateOffset(offset);
-        return [uefaLeague, ...generated.filter(g => g.id !== uefaLeague.id)];
+        return [uefaLeague];
       }
-      return generateMatchesForDateOffset(offset);
+      return [];
     }
   } catch (_err) {
-    return generateMatchesForDateOffset(offset);
+    return [];
   }
 }
 
@@ -615,8 +583,8 @@ export async function fetchEventOdds(eventId: string | number): Promise<{
       `https://www.sofascore.com/api/v1/event/${eventId}/odds/1/all`
     );
 
-    if (data?.markets && data.markets.length > 0) {
-      const ftMarket = data.markets.find(
+    if (data?.data?.markets && data.data.markets.length > 0) {
+      const ftMarket = data.data.markets.find(
         (m) => m.marketName?.toLowerCase() === 'full time' || m.marketName?.toLowerCase() === '1x2'
       );
 
@@ -634,7 +602,7 @@ export async function fetchEventOdds(eventId: string | number): Promise<{
       }
 
       const parsedMarkets: LiveMarketGroup[] = [];
-      for (const m of data.markets) {
+      for (const m of data.data.markets) {
         if (m.choices && m.choices.length > 0) {
           parsedMarkets.push({
             marketName: m.marketName,
@@ -724,10 +692,10 @@ export async function fetchEventVotes(eventId: string | number) {
       `https://www.sofascore.com/api/v1/event/${eventId}/votes`
     );
 
-    if (data?.vote) {
-      const v1 = data.vote.vote1 || 0;
-      const vx = data.vote.voteX || 0;
-      const v2 = data.vote.vote2 || 0;
+    if (data?.data?.vote) {
+      const v1 = data.data.vote.vote1 || 0;
+      const vx = data.data.vote.voteX || 0;
+      const v2 = data.data.vote.vote2 || 0;
       const total = v1 + vx + v2;
 
       if (total > 0) {
@@ -770,8 +738,8 @@ export async function fetchUEFAClubRankings() {
     const data = await fetchFromSofascore<RankingsResponse>(
       'https://www.sofascore.com/api/v1/rankings/type/1'
     );
-    if (data?.rankings && data.rankings.length > 0) {
-      return data.rankings.slice(0, 10).map((r, i) => ({
+    if (data?.data?.rankings && data.data.rankings.length > 0) {
+      return data.data.rankings.slice(0, 10).map((r, i) => ({
         rank: r.ranking ?? (i + 1),
         name: r.uniqueTournament?.name || 'Tournament'
       }));
@@ -815,8 +783,8 @@ export async function fetchLiveCategories(): Promise<LiveCategoryItem[]> {
     const data = await fetchFromSofascore<{ categories?: LiveCategoryItem[] }>(
       'https://www.sofascore.com/api/v1/sport/football/categories'
     );
-    if (data?.categories && data.categories.length > 0) {
-      return data.categories;
+    if (data?.data?.categories && data.data.categories.length > 0) {
+      return data.data.categories;
     }
   } catch (_err) {
     // Fallback
@@ -838,11 +806,11 @@ export async function fetchUniqueTournamentsForCategory(categoryId: number): Pro
       uniqueTournaments?: LiveUniqueTournamentItem[];
     }>(`https://www.sofascore.com/api/v1/category/${categoryId}/unique-tournaments`);
 
-    if (data?.groups?.[0]?.uniqueTournaments) {
-      return data.groups[0].uniqueTournaments;
+    if (data?.data?.groups?.[0]?.uniqueTournaments) {
+      return data.data.groups[0].uniqueTournaments;
     }
-    if (data?.uniqueTournaments) {
-      return data.uniqueTournaments;
+    if (data?.data?.uniqueTournaments) {
+      return data.data.uniqueTournaments;
     }
   } catch (_err) {
     // Fallback
@@ -928,10 +896,10 @@ export async function fetchLiveEventDetails(eventId: string | number): Promise<L
     ]);
 
     return {
-      lineups: lineups || undefined,
-      graph: graph || undefined,
-      incidents: incidents || undefined,
-      statistics: statistics || undefined
+      lineups: lineups?.data || undefined,
+      graph: graph?.data || undefined,
+      incidents: incidents?.data || undefined,
+      statistics: statistics?.data || undefined
     };
   } catch (_err) {
     return {};

@@ -29,7 +29,7 @@ import { MatchEventsTimeline } from './MatchEventsTimeline';
 interface CenterMatchDetailsProps {
   currentMatch?: Match | null;
   allMatches?: Match[];
-  onSelectOdds?: (selection: { matchTitle: string; market: string; odds: number }) => void;
+  onSelectOdds?: (selection: { matchId: string; matchTitle: string; market: string; odds: number }) => void;
   onAddStake?: (record: Omit<StakingRecord, 'id'>) => void;
   onNavigateMatch?: (match: Match) => void;
   onOpenTeam?: (teamId: string) => void;
@@ -307,6 +307,7 @@ export const CenterMatchDetails = ({
     setStakeAmountInput('15');
 
     onSelectOdds?.({
+      matchId: activeMatch.id,
       matchTitle: `${activeMatch.homeTeam} vs ${activeMatch.awayTeam}`,
       market,
       odds

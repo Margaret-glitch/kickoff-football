@@ -32,7 +32,7 @@ interface MobileLayoutProps {
   dateOffset: number;
   onDateChange: (offset: number) => void;
   onToggleFavorite: (id: string) => void;
-  onSelectOdds: (selection: { matchTitle: string; market: string; odds: number }) => void;
+  onSelectOdds: (selection: { matchId: string; matchTitle: string; market: string; odds: number }) => void;
   onAddStake?: (newStake: Omit<StakingRecord, 'id'>) => void;
   stakingHistory?: StakingRecord[];
 }
@@ -101,7 +101,7 @@ export const MobileLayout = ({
 
   const handleOddsSelectWithAuth = (selection: { matchTitle: string; market: string; odds: number }) => {
     executeOrAuth(() => {
-      onSelectOdds(selection);
+      onSelectOdds({ ...selection, matchId: selectedMatch?.id || '' });
     });
   };
 

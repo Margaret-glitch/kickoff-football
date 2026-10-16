@@ -46,11 +46,9 @@ function AppContent() {
   const { user, profile, depositFunds, deductFunds } = useAuth();
   const [showDepositModal, setShowDepositModal] = useState(false);
 
-  // Data state: initialized with INITIAL_LEAGUES so old matches and categories are preserved
-  const [leagues, setLeagues] = useState<LeagueGroup[]>(INITIAL_LEAGUES);
-  const [selectedMatch, setSelectedMatch] = useState<Match | null>(
-    INITIAL_LEAGUES[0]?.subGroups[0]?.matches[0] || null
-  );
+  // Data state
+  const [leagues, setLeagues] = useState<LeagueGroup[]>([]);
+  const [selectedMatch, setSelectedMatch] = useState<Match | null>(null);
   const [searchFilter, setSearchFilter] = useState('');
   const [activeNavTab, setActiveNavTab] = useState('home');
 
@@ -118,28 +116,45 @@ function AppContent() {
     });
   };
 
-  // Staking and transaction history state with persistence
+  // Staking and transaction history state with per-user privacy & empty default for new users
+  const userKey = user?.email || user?.uid || 'guest';
+
   const [stakingHistory, setStakingHistory] = useState<StakingRecord[]>(() => {
     try {
-      const saved = localStorage.getItem('onekickx_user_history');
+      const saved = localStorage.getItem(`onekickx_user_history_${userKey}`);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed)) return parsed;
       }
     } catch {
       // ignore
     }
-    return INITIAL_STAKING_HISTORY;
+    return [];
   });
 
-  // Save history on changes
+  // Sync when user changes
   useEffect(() => {
     try {
-      localStorage.setItem('onekickx_user_history', JSON.stringify(stakingHistory));
+      const saved = localStorage.getItem(`onekickx_user_history_${userKey}`);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        setStakingHistory(Array.isArray(parsed) ? parsed : []);
+      } else {
+        setStakingHistory([]);
+      }
+    } catch {
+      setStakingHistory([]);
+    }
+  }, [userKey]);
+
+  // Save history on changes specific to user
+  useEffect(() => {
+    try {
+      localStorage.setItem(`onekickx_user_history_${userKey}`, JSON.stringify(stakingHistory));
     } catch {
       // ignore
     }
-  }, [stakingHistory]);
+  }, [stakingHistory, userKey]);
 
   // Global listener for new deposits / bets / payout records
   useEffect(() => {
@@ -156,51 +171,54 @@ function AppContent() {
   }, []);
 
   const [activeSelection, setActiveSelection] = useState<{
+    matchId: string;
     matchTitle: string;
     market: string;
     odds: number;
   } | null>(null);
 
   // Automatically load matches for selected date
-  useEffect(() => {
-    let isMounted = true;
-    const loadMatchesForDate = async () => {
-      try {
-        const data = await fetchMatchesByDateOffset(dateOffset);
-        if (isMounted) {
-          if (data && data.length > 0) {
-            setLeagues(data);
-            const all = data.flatMap((l) => l.subGroups.flatMap((s) => s.matches));
-            const matchIdFromUrl = location.pathname.match(/\/match\/([^/]+)/)?.[1];
-            if (matchIdFromUrl) {
-              const found = all.find((m) => m.id === matchIdFromUrl);
-              if (found) setSelectedMatch(found);
-            } else if (!selectedMatch) {
-              const firstMatch = all[0];
-              if (firstMatch) setSelectedMatch(firstMatch);
-            }
-          } else {
-            setLeagues(INITIAL_LEAGUES);
-            if (!selectedMatch) {
-              setSelectedMatch(INITIAL_LEAGUES[0]?.subGroups[0]?.matches[0] || null);
-            }
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadingError, setLoadingError] = useState(false);
+
+  const loadData = async (isMounted: boolean) => {
+    setIsLoading(true);
+    setLoadingError(false);
+    try {
+      const data = await fetchMatchesByDateOffset(dateOffset);
+      if (isMounted) {
+        if (data && data.length > 0) {
+          setLeagues(data);
+          const all = data.flatMap((l) => l.subGroups.flatMap((s) => s.matches));
+          const matchIdFromUrl = location.pathname.match(/\/match\/([^/]+)/)?.[1];
+          if (matchIdFromUrl) {
+            const found = all.find((m) => m.id === matchIdFromUrl);
+            if (found) setSelectedMatch(found);
+          } else if (!selectedMatch) {
+            const firstMatch = all[0];
+            if (firstMatch) setSelectedMatch(firstMatch);
           }
-        }
-      } catch (err) {
-        console.warn('Failed to load matches for date:', err);
-        if (isMounted) {
-          setLeagues(INITIAL_LEAGUES);
-          if (!selectedMatch) {
-            setSelectedMatch(INITIAL_LEAGUES[0]?.subGroups[0]?.matches[0] || null);
-          }
+        } else {
+          setLeagues([]);
+          setSelectedMatch(null);
         }
       }
-    };
+    } catch (err) {
+      console.warn('Failed to load matches:', err);
+      if (isMounted) {
+        setLoadingError(true);
+        setLeagues([]);
+        setSelectedMatch(null);
+      }
+    } finally {
+      if (isMounted) setIsLoading(false);
+    }
+  };
 
-    loadMatchesForDate();
-    return () => {
-      isMounted = false;
-    };
+  useEffect(() => {
+    let isMounted = true;
+    loadData(isMounted);
+    return () => { isMounted = false; };
   }, [dateOffset, location.pathname]);
 
   // When visiting root path, ensure user is taken directly to home page
@@ -411,7 +429,7 @@ function AppContent() {
   };
 
   // When odds are clicked
-  const handleSelectOdds = (selection: { matchTitle: string; market: string; odds: number }) => {
+  const handleSelectOdds = (selection: { matchId: string; matchTitle: string; market: string; odds: number }) => {
     setActiveSelection(selection);
     setDesktopRightPanel('staking');
   };
@@ -442,6 +460,11 @@ function AppContent() {
     | 'lineups'
     | 'statistics'
     | 'commentary';
+
+  const isStale = activeSelection
+    ? allMatchesList.find((m) => m.id === activeSelection.matchId)?.isStale ?? true
+    : false;
+  const isDisabled = isStale || leagues.length === 0 || loadingError;
 
   return (
     <div className="min-h-screen bg-[#f0f3f8] text-slate-800 antialiased">
@@ -550,22 +573,38 @@ function AppContent() {
           {/* TAB 1: HOME DASHBOARD */}
           {activeNavTab === 'home' && (
             <div className="grid grid-cols-12 gap-3.5 items-start">
-              <div className="col-span-12 lg:col-span-9">
-                <HomeDashboardView
-                  matches={allMatchesList}
-                  onSelectMatch={(m) => {
-                    handleSelectMatch(m);
-                    setActiveNavTab('matches');
-                  }}
-                  onNavigateTab={(tab) => {
-                    setActiveNavTab(tab);
-                    if (tab === 'dropping-odds') navigate('/dropping-odds');
-                  }}
-                  onOpenTeam={(tId) => setSelectedTeamId(tId)}
-                  onOpenPlayer={(pId) => setSelectedPlayerId(pId)}
-                  onToggleFavorite={handleToggleFavorite}
-                />
-              </div>
+              {isLoading ? (
+                <div className="col-span-12 lg:col-span-9 p-10 text-center text-slate-500">
+                  <p>Loading football data...</p>
+                </div>
+              ) : loadingError ? (
+                <div className="col-span-12 lg:col-span-9 p-10 text-center text-rose-500">
+                  <p className="mb-4">Football data temporarily unavailable</p>
+                  <button
+                    onClick={() => loadData(true)}
+                    className="px-4 py-2 bg-[#4169e1] text-white rounded-lg cursor-pointer hover:bg-blue-700 transition-colors"
+                  >
+                    Retry
+                  </button>
+                </div>
+              ) : (
+                <div className="col-span-12 lg:col-span-9">
+                  <HomeDashboardView
+                    matches={allMatchesList}
+                    onSelectMatch={(m) => {
+                      handleSelectMatch(m);
+                      setActiveNavTab('matches');
+                    }}
+                    onNavigateTab={(tab) => {
+                      setActiveNavTab(tab);
+                      if (tab === 'dropping-odds') navigate('/dropping-odds');
+                    }}
+                    onOpenTeam={(tId) => setSelectedTeamId(tId)}
+                    onOpenPlayer={(pId) => setSelectedPlayerId(pId)}
+                    onToggleFavorite={handleToggleFavorite}
+                  />
+                </div>
+              )}
               <div className="col-span-12 lg:col-span-3">
                 <RightWalletStaking
                   onAddStake={handleAddStake}
@@ -573,6 +612,7 @@ function AppContent() {
                   onClearActiveSelection={() => setActiveSelection(null)}
                   stakingHistory={stakingHistory}
                   onRequireAuth={executeOrShowAuthOnDesktop}
+                  isDisabled={isDisabled}
                 />
               </div>
             </div>

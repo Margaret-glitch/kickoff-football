@@ -1,14 +1,10 @@
 import { useState, useEffect } from 'react';
 import {
   CreditCard,
-  Building2,
-  Smartphone,
   CheckCircle2,
   X,
   RefreshCw,
   ShieldCheck,
-  Copy,
-  Check,
   ArrowRight,
   Wallet
 } from 'lucide-react';
@@ -29,7 +25,7 @@ interface PaystackDepositModalProps {
   onSuccess?: (amountUSD: number, reference: string) => void;
 }
 
-type PaymentMethodType = 'paystack' | 'card' | 'transfer' | 'ussd';
+type PaymentMethodType = 'card' | 'paystack';
 
 interface ToastState {
   type: 'success' | 'warning';
@@ -58,16 +54,6 @@ export const PaystackDepositModal = ({
   const [cardCvv, setCardCvv] = useState('');
   const [cardName, setCardName] = useState(profile?.name || user?.name || 'Margaret Omare');
 
-  // USSD Bank Selection
-  const [selectedUssdBank, setSelectedUssdBank] = useState<{
-    name: string;
-    code: string;
-  }>({ name: 'GTBank', code: '*737*' });
-
-  // Copied clipboard indicator
-  const [hasCopiedAccount, setHasCopiedAccount] = useState(false);
-  const [hasCopiedUssd, setHasCopiedUssd] = useState(false);
-
   // Middleman exchange rate data
   const [fxData, setFxData] = useState<ExchangeRateResponse | null>(null);
   const [isLoadingFx, setIsLoadingFx] = useState(false);
@@ -85,13 +71,6 @@ export const PaystackDepositModal = ({
     reference: string;
     method: string;
   } | null>(null);
-
-  // Fixed Virtual Bank Account Details for transfers
-  const bankDetails = {
-    bankName: 'Providus Bank',
-    accountNumber: '0124893710',
-    accountName: 'ONEKICKX / MARGARET OMARE'
-  };
 
   // Fetch or refresh middleman exchange rate & preload Paystack
   const loadExchangeRate = async () => {
@@ -117,8 +96,6 @@ export const PaystackDepositModal = ({
       setSuccessInfo(null);
       setStatusToast(null);
       setIsProcessing(false);
-      setHasCopiedAccount(false);
-      setHasCopiedUssd(false);
       resolvePaystackKey().catch(() => {});
       ensurePaystackLoaded().catch(() => {});
       loadExchangeRate();
@@ -159,6 +136,21 @@ export const PaystackDepositModal = ({
     } else {
       setCardExpiry(digitsOnly);
     }
+  };
+
+  const MIN_DEPOSIT_USD = 15;
+
+  const validateMinimumDeposit = (): boolean => {
+    const minNgn = Math.round(MIN_DEPOSIT_USD * currentRate);
+    if (usdAmount < MIN_DEPOSIT_USD) {
+      setStatusToast({
+        type: 'warning',
+        title: 'Minimum Deposit Required',
+        message: `The minimum deposit is $${MIN_DEPOSIT_USD} USD (~₦${minNgn.toLocaleString()}). Please enter at least $${MIN_DEPOSIT_USD}.`
+      });
+      return false;
+    }
+    return true;
   };
 
   // Generic final confirmation handler to ensure funds are credited
@@ -229,14 +221,7 @@ export const PaystackDepositModal = ({
    * 1. Pay with Card
    */
   const handleCardPayment = () => {
-    if (usdAmount <= 0) {
-      setStatusToast({
-        type: 'warning',
-        title: 'Invalid Amount',
-        message: 'Deposit amount must be greater than zero.'
-      });
-      return;
-    }
+    if (!validateMinimumDeposit()) return;
     setIsProcessing(true);
     // Simulate brief card authorization network delay
     setTimeout(() => {
@@ -245,40 +230,10 @@ export const PaystackDepositModal = ({
   };
 
   /**
-   * 2. Pay with Bank Transfer
-   */
-  const handleTransferConfirmation = () => {
-    if (usdAmount <= 0) return;
-    setIsProcessing(true);
-    // Simulate automated bank incoming transfer verification
-    setTimeout(() => {
-      completeDeposit('Instant Bank Transfer');
-    }, 1500);
-  };
-
-  /**
-   * 3. Pay with USSD
-   */
-  const handleUssdConfirmation = () => {
-    if (usdAmount <= 0) return;
-    setIsProcessing(true);
-    setTimeout(() => {
-      completeDeposit(`USSD (${selectedUssdBank.name})`);
-    }, 1200);
-  };
-
-  /**
-   * 4. Pay via Paystack Pop-up
+   * 2. Pay via Paystack Pop-up
    */
   const handlePaystackPopup = () => {
-    if (ngnAmount <= 0 || usdAmount <= 0) {
-      setStatusToast({
-        type: 'warning',
-        title: 'Invalid Amount',
-        message: 'Deposit amount must be greater than zero.'
-      });
-      return;
-    }
+    if (!validateMinimumDeposit()) return;
 
     setIsProcessing(true);
     setStatusToast(null);
@@ -330,17 +285,14 @@ export const PaystackDepositModal = ({
         setStatusToast({
           type: 'warning',
           title: 'Transaction Cancelled',
-          message: 'Paystack pop-up was closed. You can also use Card, Transfer, or USSD tabs.'
+          message: 'Paystack pop-up was closed. You can retry anytime.'
         });
       },
       onError: () => {
-        // Fallback directly to complete deposit seamlessly so user never gets stuck
         completeDeposit('Paystack Direct Express');
       }
     });
   };
-
-  const ussdString = `${selectedUssdBank.code}2*${ngnAmount}*${bankDetails.accountNumber}#`;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-xs animate-in fade-in duration-150">
@@ -356,7 +308,7 @@ export const PaystackDepositModal = ({
                 Deposit Funds
               </h3>
               <p className="text-[11px] text-slate-500">
-                Official Paystack Gateway & Instant Payment Methods
+                Official Paystack Gateway & Secured Card Processing
               </p>
             </div>
           </div>
@@ -447,6 +399,12 @@ export const PaystackDepositModal = ({
                 </span>
               </div>
 
+              {/* Minimum Deposit Notice */}
+              <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3 flex items-center justify-between text-xs">
+                <span className="font-semibold text-amber-800">Minimum Deposit Requirement:</span>
+                <span className="font-black text-amber-900">$15 USD (~₦{Math.round(15 * currentRate).toLocaleString()})</span>
+              </div>
+
               {/* Currency & Amount Selection */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
@@ -485,7 +443,7 @@ export const PaystackDepositModal = ({
                       </span>
                       <input
                         type="number"
-                        min="1"
+                        min="15"
                         step="1"
                         value={usdAmount || ''}
                         onChange={(e) => handleUsdChange(Number(e.target.value))}
@@ -498,7 +456,7 @@ export const PaystackDepositModal = ({
                     </div>
 
                     <div className="grid grid-cols-4 gap-1.5">
-                      {[10, 25, 50, 100].map((amt) => (
+                      {[15, 25, 50, 100].map((amt) => (
                         <button
                           key={amt}
                           type="button"
@@ -522,11 +480,11 @@ export const PaystackDepositModal = ({
                       </span>
                       <input
                         type="number"
-                        min="500"
+                        min="25000"
                         step="500"
                         value={ngnAmount || ''}
                         onChange={(e) => handleNgnChange(Number(e.target.value))}
-                        placeholder="75000"
+                        placeholder="79250"
                         className="w-full pl-7 pr-16 py-2 rounded-xl bg-slate-50 border border-slate-200 focus:bg-white focus:border-[#4169e1] font-bold text-base text-slate-900 outline-none"
                       />
                       <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-slate-400">
@@ -535,7 +493,7 @@ export const PaystackDepositModal = ({
                     </div>
 
                     <div className="grid grid-cols-4 gap-1.5">
-                      {[15000, 40000, 80000, 150000].map((amt) => (
+                      {[25000, 40000, 80000, 150000].map((amt) => (
                         <button
                           key={amt}
                           type="button"
@@ -553,79 +511,52 @@ export const PaystackDepositModal = ({
                   </div>
                 )}
 
-                {/* Conversion Info */}
-                <div className="bg-blue-50/60 border border-blue-100 rounded-xl p-2.5 flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-1.5 text-slate-600">
-                    <span>Rate: 1 USD = ₦{currentRate.toFixed(2)}</span>
-                    <button
-                      type="button"
-                      onClick={loadExchangeRate}
-                      className="text-[#4169e1] hover:text-blue-700 cursor-pointer"
-                      title="Refresh rate"
-                    >
-                      <RefreshCw className={`w-3 h-3 ${isLoadingFx ? 'animate-spin' : ''}`} />
-                    </button>
+                <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1 px-0.5">
+                  <div className="flex items-center gap-1">
+                    <span>Middleman FX Rate:</span>
+                    <span className="font-bold text-slate-600">
+                      {fxData?.formattedRate || `1 USD = ₦${currentRate.toLocaleString()}`}
+                    </span>
                   </div>
-                  <div className="font-bold text-slate-900">
-                    ₦{ngnAmount.toLocaleString('en-US')} ⇄ ${usdAmount.toFixed(2)}
-                  </div>
+                  <button
+                    type="button"
+                    onClick={loadExchangeRate}
+                    className="text-[#4169e1] hover:text-blue-700 cursor-pointer"
+                    title="Refresh rate"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${isLoadingFx ? 'animate-spin' : ''}`} />
+                  </button>
                 </div>
               </div>
 
-              {/* Payment Methods Selector Tabs */}
+              {/* Payment Methods Selector Tabs (Card & Paystack Gateway) */}
               <div className="space-y-2 pt-1">
                 <span className="text-xs font-bold text-slate-700 block">Choose Payment Method</span>
-                <div className="grid grid-cols-4 gap-1.5">
+                <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
                     onClick={() => setActiveMethod('card')}
-                    className={`p-2 rounded-xl border flex flex-col items-center justify-center gap-1 text-[11px] font-bold transition-all cursor-pointer ${
+                    className={`p-2.5 rounded-xl border flex items-center justify-center gap-2 text-xs font-bold transition-all cursor-pointer ${
                       activeMethod === 'card'
                         ? 'border-[#4169e1] bg-blue-50/80 text-[#4169e1]'
                         : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
                     }`}
                   >
                     <CreditCard className="w-4 h-4" />
-                    <span>Card</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setActiveMethod('transfer')}
-                    className={`p-2 rounded-xl border flex flex-col items-center justify-center gap-1 text-[11px] font-bold transition-all cursor-pointer ${
-                      activeMethod === 'transfer'
-                        ? 'border-[#4169e1] bg-blue-50/80 text-[#4169e1]'
-                        : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                    }`}
-                  >
-                    <Building2 className="w-4 h-4" />
-                    <span>Transfer</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setActiveMethod('ussd')}
-                    className={`p-2 rounded-xl border flex flex-col items-center justify-center gap-1 text-[11px] font-bold transition-all cursor-pointer ${
-                      activeMethod === 'ussd'
-                        ? 'border-[#4169e1] bg-blue-50/80 text-[#4169e1]'
-                        : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                    }`}
-                  >
-                    <Smartphone className="w-4 h-4" />
-                    <span>USSD</span>
+                    <span>Debit Card</span>
                   </button>
 
                   <button
                     type="button"
                     onClick={() => setActiveMethod('paystack')}
-                    className={`p-2 rounded-xl border flex flex-col items-center justify-center gap-1 text-[11px] font-bold transition-all cursor-pointer ${
+                    className={`p-2.5 rounded-xl border flex items-center justify-center gap-2 text-xs font-bold transition-all cursor-pointer ${
                       activeMethod === 'paystack'
                         ? 'border-[#4169e1] bg-blue-50/80 text-[#4169e1]'
                         : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
                     }`}
                   >
                     <ShieldCheck className="w-4 h-4" />
-                    <span>Paystack</span>
+                    <span>Paystack Popup</span>
                   </button>
                 </div>
               </div>
@@ -715,161 +646,7 @@ export const PaystackDepositModal = ({
                 </div>
               )}
 
-              {/* METHOD 2: BANK TRANSFER */}
-              {activeMethod === 'transfer' && (
-                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3 animate-in fade-in-50 duration-150">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="font-bold text-slate-800">Transfer to Virtual Account</span>
-                    <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-                      Instant Auto-Credit
-                    </span>
-                  </div>
-
-                  <div className="bg-white border border-slate-200 rounded-xl p-3 space-y-2">
-                    <div className="flex justify-between items-center text-xs">
-                      <span className="text-slate-500">Bank Name:</span>
-                      <span className="font-bold text-slate-900">{bankDetails.bankName}</span>
-                    </div>
-
-                    <div className="flex justify-between items-center text-xs">
-                      <span className="text-slate-500">Account Number:</span>
-                      <div className="flex items-center gap-1.5">
-                        <span className="font-mono font-black text-sm text-[#4169e1]">
-                          {bankDetails.accountNumber}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            navigator.clipboard.writeText(bankDetails.accountNumber);
-                            setHasCopiedAccount(true);
-                            setTimeout(() => setHasCopiedAccount(false), 2000);
-                          }}
-                          className="p-1 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100 cursor-pointer"
-                          title="Copy account number"
-                        >
-                          {hasCopiedAccount ? (
-                            <Check className="w-3.5 h-3.5 text-emerald-600" />
-                          ) : (
-                            <Copy className="w-3.5 h-3.5" />
-                          )}
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="flex justify-between items-center text-xs">
-                      <span className="text-slate-500">Beneficiary:</span>
-                      <span className="font-bold text-slate-900">{bankDetails.accountName}</span>
-                    </div>
-
-                    <div className="flex justify-between items-center text-xs pt-1 border-t border-slate-100">
-                      <span className="text-slate-500">Amount to Transfer:</span>
-                      <span className="font-black text-slate-900">
-                        ₦{ngnAmount.toLocaleString('en-US')} NGN
-                      </span>
-                    </div>
-                  </div>
-
-                  <p className="text-[11px] text-slate-500">
-                    Transfer from any Nigerian banking app (GTBank, Access, Zenith, Kuda, OPay, PalmPay). Your wallet credits automatically.
-                  </p>
-
-                  <button
-                    type="button"
-                    onClick={handleTransferConfirmation}
-                    disabled={isProcessing}
-                    className="w-full py-3 rounded-xl bg-[#4169e1] hover:bg-blue-700 text-white font-bold text-sm shadow-xs transition-colors cursor-pointer flex items-center justify-center gap-2 disabled:opacity-60"
-                  >
-                    {isProcessing ? (
-                      <>
-                        <RefreshCw className="w-4 h-4 animate-spin" />
-                        <span>Verifying Transfer...</span>
-                      </>
-                    ) : (
-                      <>
-                        <span>I Have Completed The Transfer</span>
-                        <CheckCircle2 className="w-4 h-4" />
-                      </>
-                    )}
-                  </button>
-                </div>
-              )}
-
-              {/* METHOD 3: USSD CODE */}
-              {activeMethod === 'ussd' && (
-                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3 animate-in fade-in-50 duration-150">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="font-bold text-slate-800">Select Bank for USSD</span>
-                  </div>
-
-                  <div className="grid grid-cols-3 gap-1.5">
-                    {[
-                      { name: 'GTBank', code: '*737*' },
-                      { name: 'Zenith', code: '*966*' },
-                      { name: 'Access', code: '*901*' },
-                      { name: 'UBA', code: '*919*' },
-                      { name: 'FirstBank', code: '*894*' },
-                      { name: 'Fidelity', code: '*770*' }
-                    ].map((b) => (
-                      <button
-                        key={b.name}
-                        type="button"
-                        onClick={() => setSelectedUssdBank(b)}
-                        className={`p-2 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
-                          selectedUssdBank.name === b.name
-                            ? 'bg-[#4169e1] text-white border-[#4169e1]'
-                            : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
-                        }`}
-                      >
-                        {b.name}
-                      </button>
-                    ))}
-                  </div>
-
-                  <div className="bg-white border border-slate-200 rounded-xl p-3 flex items-center justify-between">
-                    <div>
-                      <span className="text-[10px] text-slate-400 font-bold block uppercase">
-                        Dial from registered phone
-                      </span>
-                      <span className="font-mono font-bold text-slate-900 text-xs sm:text-sm">
-                        {ussdString}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        navigator.clipboard.writeText(ussdString);
-                        setHasCopiedUssd(true);
-                        setTimeout(() => setHasCopiedUssd(false), 2000);
-                      }}
-                      className="px-2.5 py-1 rounded-lg bg-blue-50 text-[#4169e1] text-xs font-bold hover:bg-blue-100 flex items-center gap-1 cursor-pointer"
-                    >
-                      {hasCopiedUssd ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
-                      <span>Copy</span>
-                    </button>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={handleUssdConfirmation}
-                    disabled={isProcessing}
-                    className="w-full py-3 rounded-xl bg-[#4169e1] hover:bg-blue-700 text-white font-bold text-sm shadow-xs transition-colors cursor-pointer flex items-center justify-center gap-2 disabled:opacity-60"
-                  >
-                    {isProcessing ? (
-                      <>
-                        <RefreshCw className="w-4 h-4 animate-spin" />
-                        <span>Verifying USSD Session...</span>
-                      </>
-                    ) : (
-                      <>
-                        <span>Confirm USSD Payment</span>
-                        <CheckCircle2 className="w-4 h-4" />
-                      </>
-                    )}
-                  </button>
-                </div>
-              )}
-
-              {/* METHOD 4: PAYSTACK OFFICIAL INLINE POP-UP */}
+              {/* METHOD 2: PAYSTACK OFFICIAL INLINE POP-UP */}
               {activeMethod === 'paystack' && (
                 <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3 animate-in fade-in-50 duration-150">
                   <div className="text-center py-2 space-y-1">
@@ -877,7 +654,7 @@ export const PaystackDepositModal = ({
                       Paystack Secured Checkout
                     </span>
                     <p className="text-xs text-slate-500">
-                      Open official Paystack inline modal with Card, Apple Pay, Transfer, and Mobile Money.
+                      Open official Paystack inline modal with Card, Bank Transfer, USSD, and Mobile Money.
                     </p>
                   </div>
 
@@ -921,21 +698,15 @@ export const PaystackDepositModal = ({
                     )}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-xs font-bold text-slate-900">
+                    <h5 className="font-bold text-xs text-slate-900">
                       {statusToast.title}
-                    </p>
-                    <p className="text-[11px] text-slate-600 mt-0.5 break-all">
+                    </h5>
+                    <p className="text-[11px] text-slate-600 leading-relaxed mt-0.5">
                       {statusToast.message}
                     </p>
                   </div>
                 </div>
               )}
-
-              {/* Security Badge */}
-              <div className="flex items-center justify-center gap-1.5 text-[11px] text-slate-400 pt-0.5">
-                <ShieldCheck className="w-3.5 h-3.5 text-slate-400" />
-                <span>Secured by Paystack • 256-bit Encryption • Instant Credit</span>
-              </div>
             </>
           )}
         </div>

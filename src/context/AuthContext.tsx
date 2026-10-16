@@ -29,7 +29,6 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const LOCAL_STORAGE_USER_KEY = 'onekickx_cached_user';
-const LOCAL_STORAGE_PROFILE_KEY = 'onekickx_cached_profile';
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<BreacherUser | null>(null);
@@ -38,22 +37,25 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
 
+  const userIdentifier = user?.uid || user?.id || user?.email || 'guest';
+  const profileKey = `onekickx_profile_${userIdentifier}`;
+
   // Load session on startup
   useEffect(() => {
     let isMounted = true;
 
     async function checkAuthSession() {
-      // First check local storage for instant render without flash
       try {
         const cachedUserStr = localStorage.getItem(LOCAL_STORAGE_USER_KEY);
-        const cachedProfileStr = localStorage.getItem(LOCAL_STORAGE_PROFILE_KEY);
         if (cachedUserStr) {
           const cachedUser = JSON.parse(cachedUserStr);
           if (isMounted) setUser(cachedUser);
-        }
-        if (cachedProfileStr) {
-          const cachedProfile = JSON.parse(cachedProfileStr);
-          if (isMounted) setProfile(cachedProfile);
+          const cachedId = cachedUser.uid || cachedUser.id || cachedUser.email || 'guest';
+          const cachedProfStr = localStorage.getItem(`onekickx_profile_${cachedId}`);
+          if (cachedProfStr) {
+            const cachedProf = JSON.parse(cachedProfStr);
+            if (isMounted) setProfile(cachedProf);
+          }
         }
       } catch {
         // ignore
@@ -66,16 +68,22 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             setUser(liveUser);
             localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(liveUser));
             
+            const liveId = liveUser.uid || liveUser.id || liveUser.email;
+            const pKey = `onekickx_profile_${liveId}`;
+
             // Fetch user profile from Breacher DB
-            const userIdentifier = liveUser.uid || liveUser.id || liveUser.email;
-            const dbProfile = await getUserProfile(userIdentifier);
+            const dbProfile = await getUserProfile(liveId);
             if (dbProfile) {
-              setProfile(dbProfile);
-              localStorage.setItem(LOCAL_STORAGE_PROFILE_KEY, JSON.stringify(dbProfile));
+              const verifiedProf: UserProfileData = {
+                ...dbProfile,
+                balance: typeof dbProfile.balance === 'number' ? dbProfile.balance : 0
+              };
+              setProfile(verifiedProf);
+              localStorage.setItem(pKey, JSON.stringify(verifiedProf));
             } else {
-              // Default profile with 0 balance
+              // Default profile with genuine 0 balance and empty history
               const defaultProf: UserProfileData = {
-                uid: userIdentifier,
+                uid: liveId,
                 name: liveUser.name || 'Football Fan',
                 email: liveUser.email,
                 balance: 0,
@@ -83,7 +91,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
                 onboarded: false
               };
               setProfile(defaultProf);
-              localStorage.setItem(LOCAL_STORAGE_PROFILE_KEY, JSON.stringify(defaultProf));
+              localStorage.setItem(pKey, JSON.stringify(defaultProf));
               saveUserProfile(defaultProf).catch(() => {});
             }
           }
@@ -109,11 +117,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setUser(loggedUser);
       localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(loggedUser));
 
-      const userIdentifier = loggedUser.uid || loggedUser.id || loggedUser.email;
-      let dbProfile = await getUserProfile(userIdentifier);
+      const loggedId = loggedUser.uid || loggedUser.id || loggedUser.email;
+      const pKey = `onekickx_profile_${loggedId}`;
+
+      let dbProfile = await getUserProfile(loggedId);
       if (!dbProfile) {
         dbProfile = {
-          uid: userIdentifier,
+          uid: loggedId,
           name: loggedUser.name || email.split('@')[0],
           email: loggedUser.email,
           balance: 0,
@@ -121,9 +131,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           onboarded: false
         };
         await saveUserProfile(dbProfile);
+      } else {
+        dbProfile = {
+          ...dbProfile,
+          balance: typeof dbProfile.balance === 'number' ? dbProfile.balance : 0
+        };
       }
       setProfile(dbProfile);
-      localStorage.setItem(LOCAL_STORAGE_PROFILE_KEY, JSON.stringify(dbProfile));
+      localStorage.setItem(pKey, JSON.stringify(dbProfile));
       setShowAuthModal(false);
 
       if (pendingAction) {
@@ -142,9 +157,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setUser(newUser);
       localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(newUser));
 
-      const userIdentifier = newUser.uid || newUser.id || newUser.email;
+      const newId = newUser.uid || newUser.id || newUser.email;
+      const pKey = `onekickx_profile_${newId}`;
+
       const initialProfile: UserProfileData = {
-        uid: userIdentifier,
+        uid: newId,
         name: name || newUser.name || email.split('@')[0],
         email: newUser.email,
         balance: 0,
@@ -154,7 +171,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       };
 
       setProfile(initialProfile);
-      localStorage.setItem(LOCAL_STORAGE_PROFILE_KEY, JSON.stringify(initialProfile));
+      localStorage.setItem(pKey, JSON.stringify(initialProfile));
       await saveUserProfile(initialProfile);
 
       return newUser;
@@ -175,7 +192,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     };
 
     setProfile(updated);
-    localStorage.setItem(LOCAL_STORAGE_PROFILE_KEY, JSON.stringify(updated));
+    localStorage.setItem(profileKey, JSON.stringify(updated));
     await saveUserProfile(updated);
     setShowAuthModal(false);
 
@@ -194,7 +211,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setUser(null);
     setProfile(null);
     localStorage.removeItem(LOCAL_STORAGE_USER_KEY);
-    localStorage.removeItem(LOCAL_STORAGE_PROFILE_KEY);
   };
 
   const requireAuth = (callback: () => void): boolean => {
@@ -209,7 +225,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const depositFunds = async (amount: number) => {
     const baseProfile: UserProfileData = profile || {
-      uid: user?.id || user?.uid || 'user-default',
+      uid: user?.id || user?.uid || user?.email || 'guest',
       name: user?.name || 'ONEKICKX Player',
       email: user?.email || 'player@onekickx.com',
       balance: 0,
@@ -224,7 +240,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       updatedAt: new Date().toISOString()
     };
     setProfile(updated);
-    localStorage.setItem(LOCAL_STORAGE_PROFILE_KEY, JSON.stringify(updated));
+    localStorage.setItem(profileKey, JSON.stringify(updated));
     await saveUserProfile(updated).catch(() => {});
   };
 
@@ -239,7 +255,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       updatedAt: new Date().toISOString()
     };
     setProfile(updated);
-    localStorage.setItem(LOCAL_STORAGE_PROFILE_KEY, JSON.stringify(updated));
+    localStorage.setItem(profileKey, JSON.stringify(updated));
     await saveUserProfile(updated).catch(() => {});
     return true;
   };

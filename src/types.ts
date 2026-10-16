@@ -13,6 +13,7 @@ export interface Match {
   hasRedCard?: boolean;
   redCardTeam?: 'home' | 'away';
   isFavorite?: boolean;
+  isStale?: boolean;
   odds?: {
     home: number;
     draw: number;

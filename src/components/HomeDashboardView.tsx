@@ -30,6 +30,11 @@ export const HomeDashboardView = ({
       {/* 1. Hero Spotlight: Featured Live / Marquee Match */}
       {featuredMatch && (
         <div className="relative rounded-2xl overflow-hidden backdrop-blur-xl bg-white/80 dark:bg-slate-900/40 border border-slate-200/80 dark:border-white/10 text-slate-900 dark:text-white p-5 md:p-6 transition-all">
+          {featuredMatch.isStale && (
+            <div className="mb-4 p-2 bg-amber-100 text-amber-800 text-[10px] font-bold rounded flex items-center gap-1">
+              <span>⚠️ Stale data: This match information is cached.</span>
+            </div>
+          )}
           <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />

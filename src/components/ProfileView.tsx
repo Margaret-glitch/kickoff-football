@@ -140,7 +140,7 @@ export const ProfileView = ({
   ];
 
   const payoutAccountsList: PayoutAccount[] = initialPayouts;
-  const userBalance = profile?.balance ?? 150.0;
+  const userBalance = profile?.balance ?? 0;
 
   return (
     <div className={`flex flex-col gap-4 text-slate-800 select-none ${isModal ? 'p-4' : 'p-2 sm:p-3'}`}>
