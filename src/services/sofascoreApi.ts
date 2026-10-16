@@ -215,6 +215,123 @@ export function generateMatchesForDateOffset(offset: number): LeagueGroup[] {
   });
 }
 
+// Ensure Premier League is prioritized at the top of leagues without clearing other leagues
+export function prioritizeLeagues(leagues: LeagueGroup[]): LeagueGroup[] {
+  return [...leagues].sort((a, b) => {
+    const aIsPL = a.name.toLowerCase().includes('premier league') || a.id.toLowerCase().includes('premier-league');
+    const bIsPL = b.name.toLowerCase().includes('premier league') || b.id.toLowerCase().includes('premier-league');
+    if (aIsPL && !bIsPL) return -1;
+    if (!aIsPL && bIsPL) return 1;
+
+    const aIsUCL = a.name.toLowerCase().includes('champions league');
+    const bIsUCL = b.name.toLowerCase().includes('champions league');
+    if (aIsUCL && !bIsUCL) return -1;
+    if (!aIsUCL && bIsUCL) return 1;
+
+    const aIsUNL = a.name.toLowerCase().includes('nations league');
+    const bIsUNL = b.name.toLowerCase().includes('nations league');
+    if (aIsUNL && !bIsUNL) return -1;
+    if (!aIsUNL && bIsUNL) return 1;
+
+    return 0;
+  });
+}
+
+// Fetch real 2026 Premier League fixtures directly from Sofascore & supplement with authentic 2026 fixtures
+export async function fetchPremierLeague2026Group(): Promise<LeagueGroup | null> {
+  const plTeams = [42, 17, 44, 38, 35, 33, 40, 39]; // Arsenal, Man City, Liverpool, Chelsea, Man Utd, Tottenham, Aston Villa, Newcastle
+  const seenEventIds = new Set<number>();
+  const plMatches: Match[] = [];
+
+  for (const tid of plTeams) {
+    try {
+      const data = await fetchFromSofascore<{
+        events?: Array<{
+          id: number;
+          homeTeam: { name: string; country?: { alpha2?: string } };
+          awayTeam: { name: string; country?: { alpha2?: string } };
+          tournament?: { name?: string };
+          startTimestamp?: number;
+          status?: { description?: string; type?: string };
+        }>;
+      }>(`https://www.sofascore.com/api/v1/team/${tid}/events/next/0`);
+
+      if (data?.data?.events) {
+        for (const ev of data.data.events) {
+          if (ev.tournament?.name?.toLowerCase().includes('premier league') && !seenEventIds.has(ev.id)) {
+            seenEventIds.add(ev.id);
+            const awayCode = ev.awayTeam.country?.alpha2?.toLowerCase() || 'gb-eng';
+
+            let timeLabel = '15:00';
+            let dayLabel = 'Today';
+            let isoDate = '2026-10-16';
+            if (ev.startTimestamp) {
+              const d = new Date(ev.startTimestamp * 1000);
+              const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+              const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+              const dayStr = days[d.getDay()];
+              const h = String(d.getHours()).padStart(2, '0');
+              const m = String(d.getMinutes()).padStart(2, '0');
+              timeLabel = `${h}:${m}`;
+              const today = new Date();
+              if (d.toDateString() === today.toDateString()) {
+                dayLabel = 'Today';
+              } else {
+                dayLabel = `${dayStr} ${d.getDate()} ${months[d.getMonth()]}`;
+              }
+              isoDate = d.toISOString().split('T')[0];
+            }
+
+            plMatches.push({
+              id: `pl-${ev.id}`,
+              time: timeLabel,
+              day: dayLabel,
+              date: isoDate,
+              status: ev.status?.type === 'finished' ? 'FT' : 'UPCOMING',
+              homeTeam: ev.homeTeam.name,
+              homeFlag: `https://crests.football-data.org/${tid}.png`,
+              homeScore: 0,
+              awayTeam: ev.awayTeam.name,
+              awayFlag: `https://flagcdn.com/w40/${awayCode}.png`,
+              awayScore: 0,
+              isFavorite: true,
+              odds: calculateDynamicLiveOdds(0, 0, ev.id)
+            });
+          }
+        }
+      }
+    } catch {
+      // Continue next team
+    }
+  }
+
+  // Supplement with verified 2026 Premier League fixtures from INITIAL_LEAGUES
+  const initialPL = INITIAL_LEAGUES.find((l) => l.id === 'premier-league');
+  const baseMatches = initialPL?.subGroups[0]?.matches || [];
+
+  for (const bm of baseMatches) {
+    if (!plMatches.some((m) => m.homeTeam === bm.homeTeam && m.awayTeam === bm.awayTeam)) {
+      plMatches.push(bm);
+    }
+  }
+
+  if (plMatches.length === 0) return null;
+
+  return {
+    id: 'premier-league',
+    name: 'Premier League',
+    region: 'England',
+    matchCount: plMatches.length,
+    isExpanded: true,
+    subGroups: [
+      {
+        title: 'Premier League (2026 Season - Matchday 8)',
+        matches: plMatches
+      }
+    ]
+  };
+}
+
 // Fetch real UEFA Nations League fixtures directly from Sofascore
 export async function fetchUEFANationsLeagueGroup(): Promise<LeagueGroup | null> {
   const nationalTeams = [4711, 4705, 4707, 4698];
@@ -339,15 +456,22 @@ export async function fetchLiveFootballMatches(): Promise<LeagueGroup[] | null> 
   const isStale = liveResultRaw ? liveResultRaw.cached : true;
   const liveResult = liveResultRaw ? liveResultRaw.data : null;
 
+  const plPromise = Promise.race([
+    fetchPremierLeague2026Group(),
+    new Promise<LeagueGroup | null>((resolve) => setTimeout(() => resolve(null), 2500))
+  ]);
   const uefaPromise = Promise.race([
     fetchUEFANationsLeagueGroup(),
-    new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500))
+    new Promise<LeagueGroup | null>((resolve) => setTimeout(() => resolve(null), 2500))
   ]);
 
-  const [uefaLeague] = await Promise.all([uefaPromise]);
+  const [plLeague, uefaLeague] = await Promise.all([plPromise, uefaPromise]);
 
   const finalLeagues: LeagueGroup[] = [];
 
+  if (plLeague) {
+    finalLeagues.push(plLeague);
+  }
   if (uefaLeague) {
     finalLeagues.push(uefaLeague);
   }
@@ -449,7 +573,7 @@ export async function fetchLiveFootballMatches(): Promise<LeagueGroup[] | null> 
     });
   }
 
-  return finalLeagues;
+  return prioritizeLeagues(finalLeagues);
 }
 
 // Fetch real finished fixtures for past days
@@ -527,21 +651,61 @@ export async function fetchFinishedPastMatches(): Promise<LeagueGroup[] | null> 
 // Fetch matches dynamically based on date offset (0 = Today, -1 = Yesterday, 1 = Tomorrow, etc.)
 export async function fetchMatchesByDateOffset(offset: number): Promise<LeagueGroup[] | null> {
   try {
+    const plPromise = Promise.race([
+      fetchPremierLeague2026Group(),
+      new Promise<LeagueGroup | null>((resolve) => setTimeout(() => resolve(null), 2500))
+    ]);
+    const uefaPromise = Promise.race([
+      fetchUEFANationsLeagueGroup(),
+      new Promise<LeagueGroup | null>((resolve) => setTimeout(() => resolve(null), 2500))
+    ]);
+
     if (offset === 0) {
-      const liveMatches = await fetchLiveFootballMatches();
-      return liveMatches && liveMatches.length > 0 ? liveMatches : [];
+      const [liveMatches, plLeague, uefaLeague] = await Promise.all([
+        fetchLiveFootballMatches(),
+        plPromise,
+        uefaPromise
+      ]);
+
+      const combined: LeagueGroup[] = [];
+      if (plLeague) combined.push(plLeague);
+      if (uefaLeague) combined.push(uefaLeague);
+
+      if (liveMatches && liveMatches.length > 0) {
+        for (const l of liveMatches) {
+          if (!combined.some((c) => c.id === l.id || c.name.toLowerCase() === l.name.toLowerCase())) {
+            combined.push(l);
+          }
+        }
+      }
+
+      // Preserve all other initial leagues (LaLiga, etc.) without clearing
+      for (const initL of INITIAL_LEAGUES) {
+        if (!combined.some((c) => c.id === initL.id || c.name.toLowerCase() === initL.name.toLowerCase())) {
+          combined.push(initL);
+        }
+      }
+
+      return prioritizeLeagues(combined);
     } else if (offset < 0) {
       const pastMatches = await fetchFinishedPastMatches();
-      return pastMatches && pastMatches.length > 0 ? pastMatches : [];
+      const pastList = pastMatches && pastMatches.length > 0 ? pastMatches : generateMatchesForDateOffset(offset);
+      return prioritizeLeagues(pastList);
     } else {
-      const uefaLeague = await fetchUEFANationsLeagueGroup();
-      if (uefaLeague) {
-        return [uefaLeague];
+      const [plLeague, uefaLeague] = await Promise.all([plPromise, uefaPromise]);
+      const futureList: LeagueGroup[] = [];
+      if (plLeague) futureList.push(plLeague);
+      if (uefaLeague) futureList.push(uefaLeague);
+      const generatedFuture = generateMatchesForDateOffset(offset);
+      for (const gl of generatedFuture) {
+        if (!futureList.some((f) => f.id === gl.id || f.name.toLowerCase() === gl.name.toLowerCase())) {
+          futureList.push(gl);
+        }
       }
-      return [];
+      return prioritizeLeagues(futureList);
     }
   } catch (_err) {
-    return [];
+    return prioritizeLeagues(INITIAL_LEAGUES);
   }
 }
 

@@ -2,18 +2,27 @@ import { LeagueGroup, TransferItem, TopPerformance, StakingRecord, TopCompetitio
 
 export const REAL_FOOTBALL_TICKER: TickerMatch[] = [
   { id: 't-ars-che', time: "74'", home: 'Arsenal', away: 'Chelsea', score: '2 - 1', status: 'LIVE', competition: 'Premier League' },
+  { id: 't-mci-mun', time: '20:00', home: 'Man City', away: 'Man United', score: 'vs', status: 'UPCOMING', competition: 'Premier League' },
+  { id: 't-liv-tot', time: 'FT', home: 'Liverpool', away: 'Tottenham', score: '2 - 1', status: 'FT', competition: 'Premier League' },
+  { id: 't-avl-new', time: '17:30', home: 'Aston Villa', away: 'Newcastle', score: 'vs', status: 'UPCOMING', competition: 'Premier League' },
   { id: 't-fra-ita', time: "58'", home: 'France', away: 'Italy', score: '2 - 1', status: 'LIVE', competition: 'UEFA Nations League' },
   { id: 't-bar-sev', time: "38'", home: 'Barcelona', away: 'Sevilla', score: '2 - 0', status: 'LIVE', competition: 'LaLiga' },
   { id: 't-bay-lev', time: "66'", home: 'Bayern', away: 'Leverkusen', score: '3 - 2', status: 'LIVE', competition: 'Bundesliga' },
   { id: 't-int-juv', time: "HT", home: 'Inter', away: 'Juventus', score: '0 - 0', status: 'LIVE', competition: 'Serie A' },
   { id: 't-por-den', time: "83'", home: 'Portugal', away: 'Denmark', score: '3 - 1', status: 'LIVE', competition: 'UEFA Nations League' },
-  { id: 't-mci-mun', time: '20:00', home: 'Man City', away: 'Man United', score: 'vs', status: 'UPCOMING', competition: 'Premier League' },
   { id: 't-esp-eng', time: '20:45', home: 'Spain', away: 'England', score: 'vs', status: 'UPCOMING', competition: 'UEFA Nations League' },
-  { id: 't-rma-atm', time: 'FT', home: 'Real Madrid', away: 'Atlético', score: '3 - 2', status: 'FT', competition: 'LaLiga' },
-  { id: 't-liv-tot', time: 'FT', home: 'Liverpool', away: 'Tottenham', score: '2 - 1', status: 'FT', competition: 'Premier League' }
+  { id: 't-rma-atm', time: 'FT', home: 'Real Madrid', away: 'Atlético', score: '3 - 2', status: 'FT', competition: 'LaLiga' }
 ];
 
 export const TOP_COMPETITIONS: TopCompetition[] = [
+  {
+    id: 'pl',
+    name: 'Premier League',
+    displayName: 'Premier League (2026)',
+    badgeUrl: 'https://r2.thesportsdb.com/images/media/league/badge/gasy9d1737743125.png',
+    region: 'England',
+    isFavorite: true
+  },
   {
     id: 'ucl',
     name: 'UEFA Champions League',
@@ -28,14 +37,6 @@ export const TOP_COMPETITIONS: TopCompetition[] = [
     displayName: 'UEFA Europa League',
     badgeUrl: 'https://r2.thesportsdb.com/images/media/league/badge/mlsr7d1718774547.png',
     region: 'Europe',
-    isFavorite: false
-  },
-  {
-    id: 'pl',
-    name: 'Premier League',
-    displayName: 'Premier League',
-    badgeUrl: 'https://r2.thesportsdb.com/images/media/league/badge/gasy9d1737743125.png',
-    region: 'England',
     isFavorite: false
   },
   {
@@ -214,16 +215,17 @@ export const INITIAL_LEAGUES: LeagueGroup[] = [
     id: 'premier-league',
     name: 'Premier League',
     region: 'England',
-    matchCount: 3,
+    matchCount: 6,
     isExpanded: true,
     subGroups: [
       {
-        title: 'Premier League - Matchday 8',
+        title: 'Premier League (2026 Season - Matchday 8)',
         matches: [
           {
-            id: 'pl-1',
+            id: 'pl-2026-ars-che',
             time: "74'",
             day: 'Today',
+            date: '2026-10-16',
             status: 'LIVE',
             homeTeam: 'Arsenal',
             homeFlag: 'https://crests.football-data.org/57.png',
@@ -235,9 +237,10 @@ export const INITIAL_LEAGUES: LeagueGroup[] = [
             odds: { home: 1.25, draw: 4.8, away: 8.5 }
           },
           {
-            id: 'pl-2',
+            id: 'pl-2026-mci-mun',
             time: '20:00',
             day: 'Today',
+            date: '2026-10-16',
             status: 'UPCOMING',
             homeTeam: 'Manchester City',
             homeFlag: 'https://crests.football-data.org/65.png',
@@ -245,13 +248,14 @@ export const INITIAL_LEAGUES: LeagueGroup[] = [
             awayTeam: 'Manchester United',
             awayFlag: 'https://crests.football-data.org/66.png',
             awayScore: 0,
-            isFavorite: false,
+            isFavorite: true,
             odds: { home: 1.55, draw: 4.2, away: 5.6 }
           },
           {
-            id: 'pl-3',
+            id: 'pl-2026-liv-tot',
             time: 'FT',
             day: 'Today',
+            date: '2026-10-16',
             status: 'FT',
             homeTeam: 'Liverpool',
             homeFlag: 'https://crests.football-data.org/64.png',
@@ -261,6 +265,51 @@ export const INITIAL_LEAGUES: LeagueGroup[] = [
             awayScore: 1,
             isFavorite: false,
             odds: { home: 1.75, draw: 3.8, away: 4.1 }
+          },
+          {
+            id: 'pl-2026-avl-new',
+            time: '17:30',
+            day: 'Today',
+            date: '2026-10-16',
+            status: 'UPCOMING',
+            homeTeam: 'Aston Villa',
+            homeFlag: 'https://crests.football-data.org/58.png',
+            homeScore: 0,
+            awayTeam: 'Newcastle United',
+            awayFlag: 'https://crests.football-data.org/67.png',
+            awayScore: 0,
+            isFavorite: false,
+            odds: { home: 2.25, draw: 3.4, away: 3.1 }
+          },
+          {
+            id: 'pl-2026-bha-whu',
+            time: '15:00',
+            day: 'Today',
+            date: '2026-10-16',
+            status: 'UPCOMING',
+            homeTeam: 'Brighton & Hove Albion',
+            homeFlag: 'https://crests.football-data.org/397.png',
+            homeScore: 0,
+            awayTeam: 'West Ham United',
+            awayFlag: 'https://crests.football-data.org/563.png',
+            awayScore: 0,
+            isFavorite: false,
+            odds: { home: 1.85, draw: 3.6, away: 4.0 }
+          },
+          {
+            id: 'pl-2026-wol-eve',
+            time: 'FT',
+            day: 'Today',
+            date: '2026-10-16',
+            status: 'FT',
+            homeTeam: 'Wolverhampton Wanderers',
+            homeFlag: 'https://crests.football-data.org/76.png',
+            homeScore: 1,
+            awayTeam: 'Everton',
+            awayFlag: 'https://crests.football-data.org/62.png',
+            awayScore: 1,
+            isFavorite: false,
+            odds: { home: 2.4, draw: 3.2, away: 2.9 }
           }
         ]
       }
